@@ -1,0 +1,15 @@
+{
+  "tags": {
+    "25": {
+      "javaVersion": "25.0.3",
+      "correttoVersion": "25.0.3.9.1",
+      "correttoBuild": "25.0.3+9-LTS",
+      "rawOutput": "openjdk version \"25.0.3\" 2026-04-21 LTS\nOpenJDK Runtime Environment Corretto-25.0.3.9.1 (build 25.0.3+9-LTS)\nOpenJDK 64-Bit Server VM Corretto-25.0.3.9.1 (build 25.0.3+9-LTS, mixed mode, sharing)",
+      "amd64Digest": "sha256:eff08920757ac9bfcda47deea4b25de46149307ac485556f6f8da5fd0d38eaee",
+      "firstSeen": "2026-07-19",
+      "lastChecked": "2026-07-19"
+    }
+  },
+  "generatedAt": "2026-07-19 15:45 UTC",
+  "source": "public.ecr.aws/lambda/java"
+}

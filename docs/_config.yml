@@ -1,0 +1,3 @@
+title: JVM-Versionen in den AWS Lambda Java Base Images
+description: Täglich aktualisierte Übersicht, welche Amazon-Corretto-Version in welchem public.ecr.aws/lambda/java Base Image steckt.
+theme: jekyll-theme-cayman

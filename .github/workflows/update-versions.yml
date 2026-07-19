@@ -1,0 +1,37 @@
+name: JVM-Versionen der AWS Lambda Java Base Images prüfen
+
+on:
+  schedule:
+    # Täglich um 03:41 UTC (Cron läuft auf GitHub best-effort, nicht sekundengenau)
+    - cron: '41 3 * * *'
+  workflow_dispatch: # manueller Start über die Actions-UI
+
+permissions:
+  contents: write # zum Zurückcommitten der Ergebnisse
+
+concurrency:
+  group: jvm-version-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Base Images prüfen und Website-Daten aktualisieren
+        run: python3 scripts/update_versions.py
+        env:
+          CLEANUP_IMAGES: "1" # Runner-Platte sauber halten
+
+      - name: Änderungen committen und pushen
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/versions.json docs/index.md
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen - nichts zu committen"
+          else
+            git commit -m "chore: JVM-Versionen der Lambda Java Base Images aktualisiert"
+            git push
+          fi
