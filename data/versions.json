@@ -8,44 +8,37 @@
       "amd64Digest": "sha256:eff08920757ac9bfcda47deea4b25de46149307ac485556f6f8da5fd0d38eaee",
       "firstSeen": "2026-07-19",
       "lastChecked": "2026-07-19"
-    },
-    "8.al2": {
-      "javaVersion": "1.8.0_492",
-      "correttoVersion": "8.492.09.2",
-      "correttoBuild": "1.8.0_492-b09",
-      "rawOutput": "openjdk version \"1.8.0_492\"\nOpenJDK Runtime Environment Corretto-8.492.09.2 (build 1.8.0_492-b09)\nOpenJDK 64-Bit Server VM Corretto-8.492.09.2 (build 25.492-b09, mixed mode)",
-      "amd64Digest": "sha256:563609a461605647466caae0a1ef963fb03fe716f0475d8668115c2086bd7434",
-      "firstSeen": "2026-07-19",
-      "lastChecked": "2026-07-19"
-    },
-    "11": {
+    }
+  },
+  "generatedAt": "2026-07-19 16:12 UTC",
+  "source": "public.ecr.aws/lambda/java",
+  "snapshots": {
+    "11.2026.07.16.13-x86_64": {
+      "lastChecked": "2026-07-19",
       "javaVersion": "11.0.31",
       "correttoVersion": "11.0.31.11.1",
       "correttoBuild": "11.0.31+11-LTS",
       "rawOutput": "openjdk version \"11.0.31\" 2026-04-21 LTS\nOpenJDK Runtime Environment Corretto-11.0.31.11.1 (build 11.0.31+11-LTS)\nOpenJDK 64-Bit Server VM Corretto-11.0.31.11.1 (build 11.0.31+11-LTS, mixed mode, sharing)",
-      "amd64Digest": "sha256:1f5df280b5ac687124c67729d575d70134880be5af50c29d552e5f24d595e72b",
-      "firstSeen": "2026-07-19",
-      "lastChecked": "2026-07-19"
+      "amd64Digest": "sha256:47238c7d2f9172095bde762e3b904e9fd75a29cf8ad4d794b511557cfc4acc98",
+      "firstSeen": "2026-07-19"
     },
-    "17": {
-      "javaVersion": "17.0.19",
-      "correttoVersion": "17.0.19.10.1",
-      "correttoBuild": "17.0.19+10-LTS",
-      "rawOutput": "openjdk version \"17.0.19\" 2026-04-21 LTS\nOpenJDK Runtime Environment Corretto-17.0.19.10.1 (build 17.0.19+10-LTS)\nOpenJDK 64-Bit Server VM Corretto-17.0.19.10.1 (build 17.0.19+10-LTS, mixed mode, sharing)",
-      "amd64Digest": "sha256:74c99c983829c6c9e4dd44a9ee870a836f70865229f329fb02acb6e86935822f",
-      "firstSeen": "2026-07-19",
-      "lastChecked": "2026-07-19"
+    "17.al2023.2026.07.17.17-x86_64": {
+      "lastChecked": "2026-07-19",
+      "javaVersion": "17.0.18",
+      "correttoVersion": "17.0.18.8.1",
+      "correttoBuild": "17.0.18+8-LTS",
+      "rawOutput": "openjdk version \"17.0.18\" 2026-01-20 LTS\nOpenJDK Runtime Environment Corretto-17.0.18.8.1 (build 17.0.18+8-LTS)\nOpenJDK 64-Bit Server VM Corretto-17.0.18.8.1 (build 17.0.18+8-LTS, mixed mode, sharing)",
+      "amd64Digest": "sha256:0fe2a26b0333272372c0f49e5fcd6b3e4d504391c7be4b51f2121c707594014a",
+      "firstSeen": "2026-07-19"
     },
-    "21": {
-      "javaVersion": "21.0.11",
-      "correttoVersion": "21.0.11.10.1",
-      "correttoBuild": "21.0.11+10-LTS",
-      "rawOutput": "openjdk version \"21.0.11\" 2026-04-21 LTS\nOpenJDK Runtime Environment Corretto-21.0.11.10.1 (build 21.0.11+10-LTS)\nOpenJDK 64-Bit Server VM Corretto-21.0.11.10.1 (build 21.0.11+10-LTS, mixed mode, sharing)",
-      "amd64Digest": "sha256:1dac9793c19eba748139fa1b9c722b36242425b61936419dea33e3d122e6e336",
-      "firstSeen": "2026-07-19",
-      "lastChecked": "2026-07-19"
+    "8.al2.2026.07.17.16-x86_64": {
+      "lastChecked": "2026-07-19",
+      "javaVersion": "1.8.0_492",
+      "correttoVersion": "8.492.09.2",
+      "correttoBuild": "1.8.0_492-b09",
+      "rawOutput": "openjdk version \"1.8.0_492\"\nOpenJDK Runtime Environment Corretto-8.492.09.2 (build 1.8.0_492-b09)\nOpenJDK 64-Bit Server VM Corretto-8.492.09.2 (build 25.492-b09, mixed mode)",
+      "amd64Digest": "sha256:8ecbbe3096ffe4046afdd47bbd9134c2d575d700415118d3ee8c66091259bea6",
+      "firstSeen": "2026-07-19"
     }
-  },
-  "generatedAt": "2026-07-19 15:58 UTC",
-  "source": "public.ecr.aws/lambda/java"
+  }
 }
