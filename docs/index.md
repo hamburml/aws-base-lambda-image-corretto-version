@@ -12,11 +12,15 @@ Images von `public.ecr.aws/lambda/java` geprüft werden
 > ⚠️ Inoffizielles Community-Projekt – AWS dokumentiert diese Zuordnung selbst nicht.
 > Alle Angaben ohne Gewähr; für die Richtigkeit der Daten wird keine Haftung übernommen.
 
-*Letzte Aktualisierung: 2026-07-19 15:45 UTC*
+*Letzte Aktualisierung: 2026-07-19 15:58 UTC*
 
 | Base-Image-Tag | amd64-Digest | OpenJDK | Corretto | Corretto-Build | Erstmals gesehen | Zuletzt geprüft |
 |---|---|---|---|---|---|---|
 | `:25` | `eff08920757a` | 25.0.3 | 25.0.3.9.1 | 25.0.3+9-LTS | 2026-07-19 | 2026-07-19 |
+| `:8.al2` | `563609a46160` | 1.8.0_492 | 8.492.09.2 | 1.8.0_492-b09 | 2026-07-19 | 2026-07-19 |
+| `:11` | `1f5df280b5ac` | 11.0.31 | 11.0.31.11.1 | 11.0.31+11-LTS | 2026-07-19 | 2026-07-19 |
+| `:17` | `74c99c983829` | 17.0.19 | 17.0.19.10.1 | 17.0.19+10-LTS | 2026-07-19 | 2026-07-19 |
+| `:21` | `1dac9793c19e` | 21.0.11 | 21.0.11.10.1 | 21.0.11+10-LTS | 2026-07-19 | 2026-07-19 |
 
 ## Erläuterung
 
