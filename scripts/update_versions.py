@@ -369,8 +369,8 @@ def render_row(tag: str, e: dict, maven: dict, s: dict) -> str:
     m_arches = m.get("arches", {})
     if m.get("mavenTag") and "correttoVersion" in m_arches.get("amd64", {}):
         m_amd = m_arches["amd64"]
-        maven_cell = clickable(MAVEN_IMAGE, m["mavenTag"], m_amd["digest"],
-                               f"{MAVEN_IMAGE}:{m['mavenTag']}", tp)
+        maven_cell = "x86_64: " + clickable(MAVEN_IMAGE, m["mavenTag"], m_amd["digest"],
+                                            f"{MAVEN_IMAGE}:{m['mavenTag']}", tp)
         if m_arches.get("arm64", {}).get("digest"):
             maven_cell += (f"<br>arm64: {clickable(MAVEN_IMAGE, m['mavenTag'], m_arches['arm64']['digest'], short(m_arches['arm64']['digest']), tp)}")
         match = " ✓" if m_amd["correttoVersion"] == corretto.split("<br>")[0] else " ⚠️"
@@ -416,7 +416,7 @@ STRINGS = {
             "**Base image tag**: the multi-arch tag of `public.ecr.aws/lambda/java` (snapshot tags are arch-specific).",
             "**Digests**: digests of the `x86_64` (amd64) and `arm64` manifests behind the tag (shortened). Tags are mutable – a digest identifies the content uniquely. Click to copy the full pin.",
             "**OpenJDK / Corretto / Corretto build**: output of `java -version` inside the x86_64 image. The arm64 image is verified too; any deviation is flagged (⚠️ arm64: …).",
-            "**Maven image**: the latest stable `maven:x.y.z-amazoncorretto-<major>` tag on Docker Hub for the same Java major version – i.e. the matching build image. Click the tag for the x86_64 pin, `arm64:` for the arm64 pin.",
+            "**Maven image**: the latest stable `maven:x.y.z-amazoncorretto-<major>` tag on Docker Hub for the same Java major version – i.e. the matching build image. Click `x86_64:` for the x86_64 pin, `arm64:` for the arm64 pin.",
             "**Maven Corretto**: Corretto version of that Maven image (x86_64). ✓ = identical build to the Lambda image (safe e.g. for Project Leyden AOT caches), ⚠️ = different build.",
             "**First seen**: the date this digest showed up here first.",
         ],
@@ -452,7 +452,7 @@ STRINGS = {
             "**Base-Image-Tag**: Der Multi-Arch-Tag von `public.ecr.aws/lambda/java` (Snapshot-Tags sind arch-spezifisch).",
             "**Digests**: Digests der `x86_64` (amd64)- und `arm64`-Manifeste hinter dem Tag (gekürzt). Tags sind mutable – ein Digest identifiziert den Inhalt eindeutig. Klick kopiert den vollständigen Pin.",
             "**OpenJDK / Corretto / Corretto-Build**: Ausgabe von `java -version` im x86_64-Image. Das arm64-Image wird ebenfalls geprüft; Abweichungen sind markiert (⚠️ arm64: …).",
-            "**Maven-Image**: Das neueste stabile `maven:x.y.z-amazoncorretto-<major>`-Tag auf Docker Hub mit derselben Java-Major-Version – also das passende Build-Image. Klick auf das Tag kopiert den x86_64-Pin, `arm64:` den arm64-Pin.",
+            "**Maven-Image**: Das neueste stabile `maven:x.y.z-amazoncorretto-<major>`-Tag auf Docker Hub mit derselben Java-Major-Version – also das passende Build-Image. `x86_64:` kopiert den x86_64-Pin, `arm64:` den arm64-Pin.",
             "**Maven-Corretto**: Corretto-Version dieses Maven-Images (x86_64). ✓ = identischer Build wie das Lambda-Image (z. B. für Project-Leyden-AOT-Caches nutzbar), ⚠️ = abweichender Build.",
             "**Erstmals gesehen**: Datum, an dem dieser Digest hier zuerst auftauchte.",
         ],
@@ -468,7 +468,12 @@ def render_site(data: dict, lang: str) -> str:
     maven = data.get("maven", {})
     header = s["table_header"] + "\n" + "|---|---|---|---|---|---|---|---|---|---|"
 
-    base_rows = "\n".join(render_row(t, e, maven, s) for t, e in data["tags"].items())
+    # absteigend nach Java-Major-Version sortiert (25, 21, 17, 11, 8, ...)
+    base_rows = "\n".join(
+        render_row(t, e, maven, s)
+        for t, e in sorted(data["tags"].items(),
+                           key=lambda item: int(major_of(item[1]) or 0),
+                           reverse=True))
 
     snapshots = data.get("snapshots", {})
     if snapshots:

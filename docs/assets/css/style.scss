@@ -1,0 +1,17 @@
+---
+---
+
+@import "{{ site.theme }}";
+
+/* The default max-width of 64rem is too narrow for the wide
+   version tables – give the content much more room. */
+.main-content {
+  max-width: 110rem;
+}
+
+/* Fallback: on smaller windows, scroll the table horizontally
+   instead of breaking the layout. */
+.main-content table {
+  display: block;
+  overflow-x: auto;
+}

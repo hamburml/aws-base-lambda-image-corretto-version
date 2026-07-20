@@ -1,3 +1,3 @@
-title: JVM-Versionen in den AWS Lambda Java Base Images
-description: Täglich aktualisierte Übersicht, welche Amazon-Corretto-Version in welchem public.ecr.aws/lambda/java Base Image steckt.
+title: JVM versions in the AWS Lambda Java base images
+description: Daily updated overview of which Amazon Corretto version ships with which public.ecr.aws/lambda/java base image (x86_64 & arm64) - and which maven amazoncorretto build image matches it.
 theme: jekyll-theme-cayman
