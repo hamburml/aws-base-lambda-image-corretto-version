@@ -22,7 +22,7 @@ function copyFromRef(el, ref) {
 
 > ⚠️ Inoffizielles Community-Projekt – AWS dokumentiert diese Zuordnung selbst nicht. Alle Angaben ohne Gewähr; für die Richtigkeit der Daten wird keine Haftung übernommen.
 
-*Letzte Aktualisierung: 2026-07-20 05:51 UTC*
+*Letzte Aktualisierung: 2026-07-20 06:35 UTC*
 
 💡 **Klick auf einen Digest** kopiert den gepinnten Verweis (`<image>:<tag>@sha256:<digest>`) – so wie er in einem Dockerfile hinter `FROM` stehen muss.
 
