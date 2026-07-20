@@ -39,7 +39,7 @@ Maven image contains the same Corretto build as the Lambda image.
      published as arch-specific `-x86_64`/`-arm64` tags and/or as a multi-arch tag
      without suffix) created since the last run (discovery window defaults to 1 day;
      the tags contain a date only, no time – so yesterday + today are covered).
-     Retention in the table: 14 days. Note: the tag list of `public.ecr.aws` is
+     Retention in the table: 90 days. Note: the tag list of `public.ecr.aws` is
      capped at 1000 entries without working pagination and is not reliably ordered –
      so the list only provides candidate prefixes; the tag variants of each tracked
      prefix are then probed directly via the manifests endpoint, which also
@@ -60,6 +60,10 @@ Maven image contains the same Corretto build as the Lambda image.
 `FROM` in a Dockerfile. This applies to the Lambda images (x86_64 and arm64) as well
 as to the Maven images. (Works only on the Pages website, not in the GitHub repo view –
 github.com strips JavaScript from rendered Markdown.)
+
+🔎 **Filter:** Above the snapshot table there are buttons to filter the snapshot rows
+by Java major version (e.g. *25* shows only the Java 25 snapshots, *All* shows
+everything again). (Like click-to-copy, this works only on the Pages website.)
 
 ## Enable GitHub Pages (one-time)
 
@@ -84,7 +88,7 @@ TAGS="25" python3 scripts/update_versions.py
 # change the discovery window for snapshot tags (default: 1 day)
 SNAPSHOT_TAG_MAX_AGE_DAYS=3 python3 scripts/update_versions.py
 
-# change the retention of the snapshot table (default: 14 days)
+# change the retention of the snapshot table (default: 90 days)
 SNAPSHOT_HISTORY_DAYS=30 python3 scripts/update_versions.py
 
 # delete pulled images again afterwards (this is how it runs in CI)

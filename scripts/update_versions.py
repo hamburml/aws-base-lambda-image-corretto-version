@@ -23,7 +23,7 @@ Flow:
      stable maven:x.y.z-amazoncorretto-<major> image from Docker Hub (digests
      via the Hub API, no pull) and read its Corretto version per architecture.
   4. Write data/versions.json and re-render the website (docs/index.md).
-     Snapshot entries are removed after SNAPSHOT_HISTORY_DAYS (default: 14).
+     Snapshot entries are removed after SNAPSHOT_HISTORY_DAYS (default: 90).
 
 Only the standard library + Docker are needed. For arm64 images, QEMU/binfmt
 must be set up (GitHub Actions: docker/setup-qemu-action).
@@ -56,7 +56,7 @@ SITE = REPO_ROOT / "docs" / "index.md"
 
 TAGS = os.environ.get("TAGS", "8.al2 11 17 21 25").split()
 SNAPSHOT_TAG_MAX_AGE_DAYS = int(os.environ.get("SNAPSHOT_TAG_MAX_AGE_DAYS", "1"))
-SNAPSHOT_HISTORY_DAYS = int(os.environ.get("SNAPSHOT_HISTORY_DAYS", "14"))
+SNAPSHOT_HISTORY_DAYS = int(os.environ.get("SNAPSHOT_HISTORY_DAYS", "90"))
 CLEANUP_IMAGES = os.environ.get("CLEANUP_IMAGES", "").lower() in ("1", "true", "yes")
 
 # Internally used architecture names (docker --platform linux/<arch>) and their
@@ -358,6 +358,25 @@ function copyFromRef(el, ref) {
     window.prompt("Copy manually (Ctrl+C):", ref);
   });
 }
+function filterSnapshots(major) {
+  var div = document.getElementById("snapshot-filter");
+  if (!div) { return; }
+  var table = div.nextElementSibling;
+  while (table && table.tagName !== "TABLE") { table = table.nextElementSibling; }
+  if (!table) { return; }
+  var rows = table.getElementsByTagName("tr");
+  for (var i = 0; i < rows.length; i++) {
+    var cells = rows[i].getElementsByTagName("td");
+    if (!cells.length) { continue; }  // header row
+    var m = cells[0].textContent.match(/:(\\d+)/);
+    rows[i].style.display = (!major || (m && m[1] === major)) ? "" : "none";
+  }
+  var buttons = div.getElementsByTagName("button");
+  for (var j = 0; j < buttons.length; j++) {
+    buttons[j].style.fontWeight =
+      buttons[j].getAttribute("data-major") === major ? "bold" : "normal";
+  }
+}
 </script>"""
 
 
@@ -457,6 +476,8 @@ STRINGS = {
                       "available for years."),
     "snapshot_empty": ("No new dated snapshot tags within the discovery window "
                        f"({SNAPSHOT_TAG_MAX_AGE_DAYS} day(s); retention: {SNAPSHOT_HISTORY_DAYS} days)."),
+    "snapshot_filter_label": "Filter by Java version:",
+    "snapshot_filter_all": "All",
     "table_header": ("| Base image tag | Base image digests (x86_64 / arm64) | OpenJDK | Corretto | Corretto build "
                      "| Maven image tag | Maven image digests (x86_64 / arm64) | Maven Corretto | First seen | Last checked |"),
     "explanation": [
@@ -497,8 +518,20 @@ def render_site(data: dict) -> str:
         snapshot_rows = "\n".join(
             render_row(t, e, maven, s)
             for t, e in sorted(snapshots.items(), key=sort_key, reverse=True))
+        # Filter buttons: "All" plus one button per Java major version present
+        # in the snapshot table (filtered client-side by filterSnapshots())
+        majors = sorted({m for m in (major_of(e) for e in snapshots.values())
+                         if m}, key=int, reverse=True)
+        buttons = " ".join(
+            f'<button type="button" data-major="{m}" '
+            f'onclick="filterSnapshots(\'{m}\')">{m}</button>' for m in majors)
+        snapshot_filter = (
+            f'<div id="snapshot-filter">{s["snapshot_filter_label"]} '
+            f'<button type="button" data-major="" style="font-weight:bold" '
+            f'onclick="filterSnapshots(\'\')">{s["snapshot_filter_all"]}</button> '
+            f'{buttons}</div>')
         snapshot_section = (f"## {s['snapshot_section']}\n\n{s['snapshot_text']}\n\n"
-                            f"{header}\n{snapshot_rows}")
+                            f"{snapshot_filter}\n\n{header}\n{snapshot_rows}")
     else:
         snapshot_section = f"## {s['snapshot_section']}\n\n{s['snapshot_empty']}"
 

@@ -12,6 +12,25 @@ function copyFromRef(el, ref) {
     window.prompt("Copy manually (Ctrl+C):", ref);
   });
 }
+function filterSnapshots(major) {
+  var div = document.getElementById("snapshot-filter");
+  if (!div) { return; }
+  var table = div.nextElementSibling;
+  while (table && table.tagName !== "TABLE") { table = table.nextElementSibling; }
+  if (!table) { return; }
+  var rows = table.getElementsByTagName("tr");
+  for (var i = 0; i < rows.length; i++) {
+    var cells = rows[i].getElementsByTagName("td");
+    if (!cells.length) { continue; }  // header row
+    var m = cells[0].textContent.match(/:(\d+)/);
+    rows[i].style.display = (!major || (m && m[1] === major)) ? "" : "none";
+  }
+  var buttons = div.getElementsByTagName("button");
+  for (var j = 0; j < buttons.length; j++) {
+    buttons[j].style.fontWeight =
+      buttons[j].getAttribute("data-major") === major ? "bold" : "normal";
+  }
+}
 </script>
 
 # JVM versions in the AWS Lambda Java base images
@@ -38,9 +57,11 @@ The tags of `public.ecr.aws/lambda/java` (`:25`, `:21`, …) are mutable pointer
 
 ## New snapshot tags
 
-Dated snapshot tags that appeared in the registry since the last run (discovery window: 1 day(s); shown for 14 days). The tags carry a date only, no time. A snapshot is published as arch-specific tags (`-x86_64` / `-arm64`) and/or as a multi-arch tag without suffix – the table shows both architectures either way.
+Dated snapshot tags that appeared in the registry since the last run (discovery window: 1 day(s); shown for 90 days). The tags carry a date only, no time. A snapshot is published as arch-specific tags (`-x86_64` / `-arm64`) and/or as a multi-arch tag without suffix – the table shows both architectures either way.
 
 **Why this table is useful:** the base tags above are mutable and move to newer Corretto builds over time. If the latest base image has no matching Maven build image yet (⚠️ above) – breaking setups that need an exact JVM build match, such as Project Leyden AOT caches – pin the runtime to a dated snapshot whose Corretto build still matches your build image until the Maven image catches up. The snapshot tags are immutable; AWS does not document an expiry for them, and in practice they remain available for years.
+
+<div id="snapshot-filter">Filter by Java version: <button type="button" data-major="" style="font-weight:bold" onclick="filterSnapshots('')">All</button> <button type="button" data-major="25" onclick="filterSnapshots('25')">25</button> <button type="button" data-major="17" onclick="filterSnapshots('17')">17</button> <button type="button" data-major="11" onclick="filterSnapshots('11')">11</button> <button type="button" data-major="8" onclick="filterSnapshots('8')">8</button></div>
 
 | Base image tag | Base image digests (x86_64 / arm64) | OpenJDK | Corretto | Corretto build | Maven image tag | Maven image digests (x86_64 / arm64) | Maven Corretto | First seen | Last checked |
 |---|---|---|---|---|---|---|---|---|---|
