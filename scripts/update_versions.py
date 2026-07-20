@@ -9,12 +9,16 @@ Flow:
      determine the amd64/arm64 digests (no pull). Only if a digest is unknown/
      changed: pull the image of that architecture and run `java -version`
      (arm64 via QEMU emulation).
-  2. Snapshot tags (e.g. "25.2026.07.11.03-x86_64"): dated tags whose date is
-     at most SNAPSHOT_TAG_MAX_AGE_DAYS in the past (default: 1 = since the last
-     daily run; the tags carry no time, so yesterday + today are covered).
-     x86_64 and arm64 variants are grouped into a single entry. If a digest is
-     already known, the version is adopted without a pull - same digest = same
-     content.
+  2. Snapshot tags (e.g. "25.2026.07.11.03", published as arch-specific
+     "-x86_64"/"-arm64" tags and/or as a multi-arch tag without suffix): dated
+     tags whose date is at most SNAPSHOT_TAG_MAX_AGE_DAYS in the past
+     (default: 1 = since the last daily run; the tags carry no time, so
+     yesterday + today are covered). The tag list is capped (1000 entries) and
+     not reliably ordered, so it only provides candidate prefixes: the tag
+     variants of each tracked prefix are then probed directly via the
+     manifests endpoint, which also backfills variants the list missed.
+     If a digest is already known, the version is adopted without a pull -
+     same digest = same content.
   3. Maven counterpart: for each Corretto major version, determine the latest
      stable maven:x.y.z-amazoncorretto-<major> image from Docker Hub (digests
      via the Hub API, no pull) and read its Corretto version per architecture.
@@ -62,8 +66,8 @@ LAMBDA_ARCH_SUFFIX = {"amd64": "x86_64", "arm64": "arm64"}
 
 JAVA_RE = re.compile(r'openjdk version "([^"]+)"')
 CORRETTO_RE = re.compile(r"Corretto-([\d.]+)\s+\(build ([^)]+)\)")
-# e.g. 25.2026.07.11.03-x86_64 or 8.al2.2026.07.17.16-arm64
-SNAPSHOT_RE = re.compile(r"^(.+\.(\d{4})\.(\d{2})\.(\d{2})\.\d{2})-(x86_64|arm64)$")
+# e.g. 25.2026.07.11.03 or 8.al2.2026.07.17.16-arm64 (arch suffix optional)
+SNAPSHOT_RE = re.compile(r"^(.+\.(\d{4})\.(\d{2})\.(\d{2})\.\d{2})(?:-(x86_64|arm64))?$")
 
 ACCEPT = ", ".join([
     "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -107,29 +111,32 @@ def list_recent_tags(token: str) -> list:
         return json.load(resp).get("tags", [])
 
 
-def recent_snapshot_tags(token: str) -> dict:
-    """Dated snapshot tags within the discovery window, grouped by prefix.
+def recent_snapshot_prefixes(token: str) -> list:
+    """Dated snapshot tag prefixes within the discovery window.
 
-    Returns: {"25.2026.07.11.03": {"x86_64": "25.2026.07.11.03-x86_64", ...}}
+    The tag list is capped (1000 entries) and not reliably ordered, so this
+    only yields candidate prefixes - the tag variants of each prefix are
+    probed directly in process_snapshot.
     """
-    found: dict = {}
+    found = set()
     for tag in list_recent_tags(token):
         m = SNAPSHOT_RE.match(tag)
         if not m:
             continue
         tag_date = date(int(m.group(2)), int(m.group(3)), int(m.group(4)))
         if (today() - tag_date).days <= SNAPSHOT_TAG_MAX_AGE_DAYS:
-            found.setdefault(m.group(1), {})[m.group(5)] = tag
-    return dict(sorted(found.items()))
+            found.add(m.group(1))
+    return sorted(found)
 
 
 def manifest_digests(tag: str, token: str) -> dict:
     """Digests of a tag per architecture (no pull): {"amd64": ..., "arm64": ...}.
 
-    Multi-arch tags (e.g. ":25") return a manifest list. Dated snapshot tags
-    are arch-specific (a single manifest) - in that case the SHA-256 checksum
-    of the manifest bytes counts (that is how the digest is defined); the
-    architecture is in the manifest itself.
+    Multi-arch tags (e.g. ":25" or dated tags without arch suffix) return a
+    manifest list. Arch-specific tags (suffix -x86_64/-arm64) return a single
+    manifest - in that case the SHA-256 checksum of the manifest bytes counts
+    (that is how the digest is defined) and the architecture comes from the
+    suffix (or, if there is none, from the image config blob).
     """
     with registry_get(f"manifests/{tag}", token) as resp:
         body = resp.read()
@@ -144,13 +151,45 @@ def manifest_digests(tag: str, token: str) -> dict:
         if not digests:
             raise RuntimeError(f"No linux manifests found for tag '{tag}'")
         return digests
-    # Single manifest: OCI manifests have no architecture field - for the
-    # snapshot tags the architecture is in the suffix (-x86_64/-arm64).
+    # Single manifest: OCI manifests have no architecture field - it is taken
+    # from the tag suffix (-x86_64/-arm64) or, if there is none, from the
+    # image config blob.
     suffix = tag.rsplit("-", 1)[-1]
     arch = {v: k for k, v in LAMBDA_ARCH_SUFFIX.items()}.get(suffix)
     if not arch:
+        arch = config_arch(doc, token)
+    if not arch:
         raise RuntimeError(f"Cannot determine architecture for tag '{tag}'")
     return {arch: "sha256:" + hashlib.sha256(body).hexdigest()}
+
+
+def config_arch(manifest: dict, token: str) -> str | None:
+    """Architecture of a single-manifest image, read from its config blob."""
+    try:
+        digest = manifest.get("config", {}).get("digest", "")
+        with registry_get(f"blobs/{digest}", token) as resp:
+            arch = json.load(resp).get("architecture")
+    except Exception:
+        return None
+    return arch if arch in ARCHES else None
+
+
+def probe_snapshot_tag(prefix: str, token: str) -> dict:
+    """All tag variants of a snapshot prefix and their per-arch digests.
+
+    Probes the arch-specific tags and the multi-arch no-suffix tag directly
+    (the tag list is capped, so variants missing from it are found here).
+    Returns {arch: (tag, digest)}; arch-specific tags take precedence.
+    """
+    found: dict = {}
+    for tag in (f"{prefix}-x86_64", f"{prefix}-arm64", prefix):
+        try:
+            digests = manifest_digests(tag, token)
+        except Exception:  # variant does not exist (404) or is not readable
+            continue
+        for arch, digest in digests.items():
+            found.setdefault(arch, (tag, digest))
+    return found
 
 
 # ------------------------------------------------------------------ Docker Hub
@@ -261,13 +300,13 @@ def process_base_tag(tag: str, entry: dict, known: dict, token: str) -> dict:
     return entry
 
 
-def process_snapshot(prefix: str, arch_tags: dict, entry: dict,
-                     known: dict, token: str) -> dict:
+def process_snapshot(prefix: str, entry: dict, known: dict, token: str) -> dict:
     entry.pop("error", None)
     try:
-        for suffix, tag in sorted(arch_tags.items()):
-            arch = {"x86_64": "amd64", "arm64": "arm64"}[suffix]
-            digest = manifest_digests(tag, token)[arch]
+        found = probe_snapshot_tag(prefix, token)
+        if not found:
+            raise RuntimeError(f"No tag variants found for snapshot '{prefix}'")
+        for arch, (tag, digest) in sorted(found.items()):
             update_arch(entry, arch, digest, known, tag, IMAGE)
             entry["arches"][arch]["tag"] = tag
     except Exception as exc:
@@ -406,8 +445,9 @@ STRINGS = {
     "snapshot_section": "New snapshot tags",
     "snapshot_text": ("Dated snapshot tags that appeared in the registry since the last run "
                       f"(discovery window: {SNAPSHOT_TAG_MAX_AGE_DAYS} day(s); shown for "
-                      f"{SNAPSHOT_HISTORY_DAYS} days). The tags carry a date only, no time, and each "
-                      "snapshot exists as an arch-specific tag (`-x86_64` / `-arm64`).\n\n"
+                      f"{SNAPSHOT_HISTORY_DAYS} days). The tags carry a date only, no time. A snapshot "
+                      "is published as arch-specific tags (`-x86_64` / `-arm64`) and/or as a multi-arch "
+                      "tag without suffix – the table shows both architectures either way.\n\n"
                       "**Why this table is useful:** the base tags above are mutable and move to newer "
                       "Corretto builds over time. If the latest base image has no matching Maven build "
                       "image yet (⚠️ above) – breaking setups that need an exact JVM build match, such as "
@@ -420,7 +460,7 @@ STRINGS = {
     "table_header": ("| Base image tag | Base image digests (x86_64 / arm64) | OpenJDK | Corretto | Corretto build "
                      "| Maven image tag | Maven image digests (x86_64 / arm64) | Maven Corretto | First seen | Last checked |"),
     "explanation": [
-        "**Base image tag**: the multi-arch tag of `public.ecr.aws/lambda/java`, linked to its page in the ECR Public Gallery (snapshot tags are arch-specific).",
+        "**Base image tag**: the multi-arch tag of `public.ecr.aws/lambda/java`, linked to its page in the ECR Public Gallery (snapshot tags are dated: arch-specific `-x86_64`/`-arm64` tags and/or a multi-arch tag).",
         "**Base image digests**: digests of the `x86_64` (amd64) and `arm64` manifests behind the tag (shortened). Tags are mutable – a digest identifies the content uniquely. Click to copy the full pin.",
         "**OpenJDK / Corretto / Corretto build**: output of `java -version` inside the x86_64 image. The arm64 image is verified too; any deviation is flagged (⚠️ arm64: …).",
         "**Maven image tag**: the latest stable `maven:x.y.z-amazoncorretto-<major>` tag on Docker Hub for the same Java major version – i.e. the matching build image.",
@@ -535,21 +575,23 @@ def main() -> int:
 
     # 2. New snapshot tags (since the last run)
     print(f"Searching snapshot tags of the last {SNAPSHOT_TAG_MAX_AGE_DAYS} day(s) ...")
-    for prefix, arch_tags in recent_snapshot_tags(token).items():
-        existing = data["snapshots"].get(prefix, {})
-        done = existing.get("arches", {}) and "error" not in existing and all(
-            "correttoVersion" in existing["arches"].get(
-                {"x86_64": "amd64", "arm64": "arm64"}[suffix], {})
-            for suffix in arch_tags)
-        if done:
-            existing["lastChecked"] = today().isoformat()
-            continue
-        if not existing:
-            print(f"New snapshot tag discovered: {prefix} ({', '.join(sorted(arch_tags))})")
-        data["snapshots"][prefix] = process_snapshot(
-            prefix, arch_tags, existing, known(), token)
+    for prefix in recent_snapshot_prefixes(token):
+        if prefix not in data["snapshots"]:
+            print(f"New snapshot tag discovered: {prefix}")
+            data["snapshots"][prefix] = {}
 
-    # 3. Clean up old snapshot entries
+    # 3. Incomplete snapshot entries: probe the tag variants directly and
+    #    backfill missing architectures (the tag list is capped and misses
+    #    variants; late-published variants are picked up here as well)
+    for prefix, entry in list(data["snapshots"].items()):
+        arches = entry.get("arches", {})
+        complete = all("correttoVersion" in arches.get(a, {}) for a in ARCHES)
+        if complete and "error" not in entry:
+            entry["lastChecked"] = today().isoformat()
+            continue
+        data["snapshots"][prefix] = process_snapshot(prefix, entry, known(), token)
+
+    # 4. Clean up old snapshot entries
     cutoff = today().toordinal() - SNAPSHOT_HISTORY_DAYS
     for prefix in list(data["snapshots"]):
         first_seen = data["snapshots"][prefix].get("firstSeen", "")
@@ -557,7 +599,7 @@ def main() -> int:
             print(f"Snapshot removed (older than {SNAPSHOT_HISTORY_DAYS} days): {prefix}")
             del data["snapshots"][prefix]
 
-    # 4. Maven counterpart for all occurring Java major versions
+    # 5. Maven counterpart for all occurring Java major versions
     majors = sorted({m for m in (major_of(e) for e in
                                  list(data["tags"].values())
                                  + list(data["snapshots"].values()))

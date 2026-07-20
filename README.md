@@ -35,12 +35,15 @@ Maven image contains the same Corretto build as the Lambda image.
    - fetches, for each base tag (`8.al2`, `11`, `17`, `21`, `25`), the **amd64 and
      arm64 manifest digests** via the registry API of `public.ecr.aws` – without a
      pull;
-   - additionally discovers **new dated snapshot tags** (e.g.
-     `25.2026.07.11.03-x86_64`/`-arm64`) created since the last run (discovery window
-     defaults to 1 day; the tags contain a date only, no time – so yesterday + today
-     are covered). Retention in the table: 14 days. Note: `public.ecr.aws` returns at
-     most 1000 tags without working pagination, but the newest ones come first –
-     sufficient for this time window;
+   - additionally discovers **new dated snapshot tags** (e.g. `25.2026.07.11.03` –
+     published as arch-specific `-x86_64`/`-arm64` tags and/or as a multi-arch tag
+     without suffix) created since the last run (discovery window defaults to 1 day;
+     the tags contain a date only, no time – so yesterday + today are covered).
+     Retention in the table: 14 days. Note: the tag list of `public.ecr.aws` is
+     capped at 1000 entries without working pagination and is not reliably ordered –
+     so the list only provides candidate prefixes; the tag variants of each tracked
+     prefix are then probed directly via the manifests endpoint, which also
+     backfills variants the list missed;
    - determines the **Maven counterpart**: for each Java major version, the latest
      stable `maven:x.y.z-amazoncorretto-<major>` tag on Docker Hub, including both
      architecture digests (Hub API, without a pull);

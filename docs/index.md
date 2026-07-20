@@ -38,7 +38,7 @@ The tags of `public.ecr.aws/lambda/java` (`:25`, `:21`, …) are mutable pointer
 
 ## New snapshot tags
 
-Dated snapshot tags that appeared in the registry since the last run (discovery window: 1 day(s); shown for 14 days). The tags carry a date only, no time, and each snapshot exists as an arch-specific tag (`-x86_64` / `-arm64`).
+Dated snapshot tags that appeared in the registry since the last run (discovery window: 1 day(s); shown for 14 days). The tags carry a date only, no time. A snapshot is published as arch-specific tags (`-x86_64` / `-arm64`) and/or as a multi-arch tag without suffix – the table shows both architectures either way.
 
 **Why this table is useful:** the base tags above are mutable and move to newer Corretto builds over time. If the latest base image has no matching Maven build image yet (⚠️ above) – breaking setups that need an exact JVM build match, such as Project Leyden AOT caches – pin the runtime to a dated snapshot whose Corretto build still matches your build image until the Maven image catches up. The snapshot tags are immutable; AWS does not document an expiry for them, and in practice they remain available for years.
 
@@ -57,7 +57,7 @@ Dated snapshot tags that appeared in the registry since the last run (discovery 
 
 ## Notes
 
-- **Base image tag**: the multi-arch tag of `public.ecr.aws/lambda/java`, linked to its page in the ECR Public Gallery (snapshot tags are arch-specific).
+- **Base image tag**: the multi-arch tag of `public.ecr.aws/lambda/java`, linked to its page in the ECR Public Gallery (snapshot tags are dated: arch-specific `-x86_64`/`-arm64` tags and/or a multi-arch tag).
 - **Base image digests**: digests of the `x86_64` (amd64) and `arm64` manifests behind the tag (shortened). Tags are mutable – a digest identifies the content uniquely. Click to copy the full pin.
 - **OpenJDK / Corretto / Corretto build**: output of `java -version` inside the x86_64 image. The arm64 image is verified too; any deviation is flagged (⚠️ arm64: …).
 - **Maven image tag**: the latest stable `maven:x.y.z-amazoncorretto-<major>` tag on Docker Hub for the same Java major version – i.e. the matching build image.
