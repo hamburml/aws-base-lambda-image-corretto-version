@@ -116,7 +116,7 @@
       }
     }
   },
-  "generatedAt": "2026-07-20 18:17 UTC",
+  "generatedAt": "2026-07-20 18:27 UTC",
   "source": "public.ecr.aws/lambda/java",
   "snapshots": {
     "11.2026.07.16.13": {

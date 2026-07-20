@@ -39,7 +39,7 @@ function filterSnapshots(major) {
 
 > ⚠️ Unofficial community project – AWS does not document this mapping itself. All information without warranty; no liability is accepted for the accuracy of the data.
 
-*Last updated: 2026-07-20 18:17 UTC*
+*Last updated: 2026-07-20 18:27 UTC*
 
 💡 **Click a digest** to copy the pinned reference (`<image>:<tag>@sha256:<digest>`) – exactly as it must appear after `FROM` in a Dockerfile.
 
