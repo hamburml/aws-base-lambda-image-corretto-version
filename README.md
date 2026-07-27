@@ -24,8 +24,10 @@ For [Project Leyden](https://openjdk.org/projects/leyden/) (AOT cache), the JVM 
 creates the cache and the JVM that runs it must be the exact same build. If you create
 your AOT cache e.g. in a Maven/Corretto build stage and run it in the Lambda Java base
 image, you need to know and match the JVM versions of both images – that is exactly
-what this overview helps with, including the ✓/⚠️ column that shows whether the latest
-Maven image contains the same Corretto build as the Lambda image.
+what this overview helps with: each row shows the Maven image tag whose Corretto build
+**exactly matches** the image of that row (or none if no tracked Maven tag matches),
+and a Maven history table lists the Corretto version of the last 30 stable Maven tags
+per Java LTS version.
 
 ## How it works
 
@@ -44,14 +46,21 @@ Maven image contains the same Corretto build as the Lambda image.
      so the list only provides candidate prefixes; the tag variants of each tracked
      prefix are then probed directly via the manifests endpoint, which also
      backfills variants the list missed;
-   - determines the **Maven counterpart**: for each Java major version, the latest
-     stable `maven:x.y.z-amazoncorretto-<major>` tag on Docker Hub, including both
-     architecture digests (Hub API, without a pull);
+    - tracks the **Maven counterparts**: for each Java major version, the 30 newest
+      stable `maven:x.y.z-amazoncorretto-<major>` tags on Docker Hub, including both
+      architecture digests (Hub API, without a pull; the tag list is paginated).
+      Pulls for `java -version` are limited to 10 Maven tags with unknown digests
+      per run (`MAVEN_HISTORY_MAX_PULLS`) because Docker Hub rate-limits pulls –
+      known digests are cached in `versions.json`, so later runs resume the
+      backfill until the history is complete;
    - only if a digest is new/unknown: `docker pull` + `java -version` in the container
      of the respective architecture (arm64 via QEMU, in CI via
      `docker/setup-qemu-action`). If a digest is already known (same content behind
      multiple tags), the version is adopted without a pull;
-   - writes `data/versions.json` and renders the website (`docs/index.md`).
+    - writes `data/versions.json` and renders the website (`docs/index.md`): the
+      base/snapshot tables show only Maven tags whose Corretto version **exactly
+      matches** the image of the row (otherwise the Maven cells stay empty); the
+      Maven history table lists all tracked Maven tags per Java LTS version;
 3. On changes, the workflow commits and pushes the results automatically.
 4. **GitHub Pages** serves `docs/` as the website.
 
@@ -61,9 +70,9 @@ Maven image contains the same Corretto build as the Lambda image.
 as to the Maven images. (Works only on the Pages website, not in the GitHub repo view –
 github.com strips JavaScript from rendered Markdown.)
 
-🔎 **Filter:** Above the snapshot table there are buttons to filter the snapshot rows
-by Java major version (e.g. *25* shows only the Java 25 snapshots, *All* shows
-everything again). (Like click-to-copy, this works only on the Pages website.)
+🔎 **Filter:** Above the snapshot table and the Maven table there are buttons to
+filter the rows by Java major version (e.g. *25* shows only the Java 25 rows, *All*
+shows everything again). (Like click-to-copy, this works only on the Pages website.)
 
 ## Enable GitHub Pages (one-time)
 
@@ -90,6 +99,13 @@ SNAPSHOT_TAG_MAX_AGE_DAYS=3 python3 scripts/update_versions.py
 
 # change the retention of the snapshot table (default: 90 days)
 SNAPSHOT_HISTORY_DAYS=30 python3 scripts/update_versions.py
+
+# number of tracked Maven tags per Java LTS version (default: 30)
+MAVEN_HISTORY_TAGS=30 python3 scripts/update_versions.py
+
+# limit pulls of Maven tags with unknown digests per run (default: 10; Docker
+# Hub rate-limits pulls - the backfill resumes automatically on the next run)
+MAVEN_HISTORY_MAX_PULLS=5 python3 scripts/update_versions.py
 
 # delete pulled images again afterwards (this is how it runs in CI)
 CLEANUP_IMAGES=1 python3 scripts/update_versions.py

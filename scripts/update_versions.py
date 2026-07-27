@@ -19,15 +19,23 @@ Flow:
      manifests endpoint, which also backfills variants the list missed.
      If a digest is already known, the version is adopted without a pull -
      same digest = same content.
-  3. Maven counterpart: for each Corretto major version, determine the latest
-     stable maven:x.y.z-amazoncorretto-<major> image from Docker Hub (digests
-     via the Hub API, no pull) and read its Corretto version per architecture.
-  4. Write data/versions.json and re-render the website (docs/index.md).
-     Snapshot entries are removed after SNAPSHOT_HISTORY_DAYS (default: 90).
+  3. Maven counterpart: for each Corretto major version, track the
+     MAVEN_HISTORY_TAGS (default: 30) newest stable
+     maven:x.y.z-amazoncorretto-<major> tags from Docker Hub (digests via the
+     Hub API, no pull) and read their Corretto versions per architecture.
+     Pulls are limited to MAVEN_HISTORY_MAX_PULLS (default: 10) tags with
+     unknown digests per run - Docker Hub rate-limits pulls, and the digest
+     cache in versions.json lets later runs resume the backfill.
+  4. Write data/versions.json and re-render the website (docs/index.md): the
+     base/snapshot tables show only Maven tags whose Corretto version exactly
+     matches the image of the row; a Maven history table lists all tracked
+     tags per Java LTS. Snapshot entries are removed after
+     SNAPSHOT_HISTORY_DAYS (default: 90).
 
 Only the standard library + Docker are needed. For arm64 images, QEMU/binfmt
 must be set up (GitHub Actions: docker/setup-qemu-action).
 Environment variables: TAGS, SNAPSHOT_TAG_MAX_AGE_DAYS, SNAPSHOT_HISTORY_DAYS,
+MAVEN_HISTORY_TAGS, MAVEN_HISTORY_MAX_PULLS,
 CLEANUP_IMAGES ("1" = delete pulled images again, for CI).
 """
 
@@ -57,6 +65,10 @@ SITE = REPO_ROOT / "docs" / "index.md"
 TAGS = os.environ.get("TAGS", "8.al2 11 17 21 25").split()
 SNAPSHOT_TAG_MAX_AGE_DAYS = int(os.environ.get("SNAPSHOT_TAG_MAX_AGE_DAYS", "1"))
 SNAPSHOT_HISTORY_DAYS = int(os.environ.get("SNAPSHOT_HISTORY_DAYS", "90"))
+# Maven history: how many stable tags per Java major version are tracked, and
+# how many tags with unknown digests may be pulled per run (Hub rate limits)
+MAVEN_HISTORY_TAGS = int(os.environ.get("MAVEN_HISTORY_TAGS", "30"))
+MAVEN_HISTORY_MAX_PULLS = int(os.environ.get("MAVEN_HISTORY_MAX_PULLS", "10"))
 CLEANUP_IMAGES = os.environ.get("CLEANUP_IMAGES", "").lower() in ("1", "true", "yes")
 
 # Internally used architecture names (docker --platform linux/<arch>) and their
@@ -68,6 +80,8 @@ JAVA_RE = re.compile(r'openjdk version "([^"]+)"')
 CORRETTO_RE = re.compile(r"Corretto-([\d.]+)\s+\(build ([^)]+)\)")
 # e.g. 25.2026.07.11.03 or 8.al2.2026.07.17.16-arm64 (arch suffix optional)
 SNAPSHOT_RE = re.compile(r"^(.+\.(\d{4})\.(\d{2})\.(\d{2})\.\d{2})(?:-(x86_64|arm64))?$")
+# Maven version at the start of a tag (e.g. "3.9.16-amazoncorretto-25")
+MVN_VER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 
 ACCEPT = ", ".join([
     "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -195,19 +209,27 @@ def probe_snapshot_tag(prefix: str, token: str) -> dict:
 # ------------------------------------------------------------------ Docker Hub
 
 def hub_get(suffix: str) -> dict:
-    with urllib.request.urlopen(f"{HUB_TAGS_API}{suffix}", timeout=30) as resp:
+    """GET on the Hub tags API; accepts a query suffix or a full (next-)URL."""
+    url = suffix if suffix.startswith("http") else f"{HUB_TAGS_API}{suffix}"
+    with urllib.request.urlopen(url, timeout=30) as resp:
         return json.load(resp)
 
 
-def latest_maven_tag(major: str) -> str | None:
-    """Latest stable maven:x.y.z-amazoncorretto-<major> tag (no aliases/RCs)."""
+def stable_maven_tags(major: str) -> list:
+    """All stable maven:x.y.z-amazoncorretto-<major> tags (no aliases/RCs),
+    newest Maven version first. Paginates the Hub API (the tag list of one
+    major version can span several pages)."""
     pat = re.compile(rf"^(\d+)\.(\d+)\.(\d+)-amazoncorretto-{re.escape(major)}$")
-    candidates = []
-    for result in hub_get(f"?name=amazoncorretto-{major}&page_size=100").get("results", []):
-        m = pat.match(result["name"])
-        if m:
-            candidates.append((tuple(int(g) for g in m.groups()), result["name"]))
-    return max(candidates)[1] if candidates else None
+    found = {}
+    url, pages = f"?name=amazoncorretto-{major}&page_size=100", 0
+    while url and pages < 10:  # safety cap on pages
+        doc = hub_get(url)
+        for result in doc.get("results", []):
+            m = pat.match(result["name"])
+            if m:
+                found[tuple(int(g) for g in m.groups())] = result["name"]
+        url, pages = doc.get("next"), pages + 1
+    return [found[v] for v in sorted(found, reverse=True)]
 
 
 def hub_digests(tag: str) -> dict:
@@ -317,17 +339,55 @@ def process_snapshot(prefix: str, entry: dict, known: dict, token: str) -> dict:
     return entry
 
 
-def process_maven(major: str, entry: dict) -> dict:
-    """Updates the Maven image entry for a Java major version."""
+def needs_pull(entry: dict, arch: str, digest: str, known: dict) -> bool:
+    """Would update_arch() have to pull the image for this arch/digest?"""
+    if digest in known:
+        return False
+    a = entry.get("arches", {}).get(arch, {})
+    return digest != a.get("digest") or "correttoVersion" not in a
+
+
+def process_maven(major: str, entry: dict, known: dict, budget: dict) -> dict:
+    """Updates the Maven tag history for a Java major version.
+
+    Tracks the MAVEN_HISTORY_TAGS newest stable tags. Tags whose digests are
+    unknown require a pull (java -version); to respect the Docker Hub pull
+    rate limit, at most budget["left"] such tags are pulled per run - the
+    rest is skipped and resumed by a later run (digests are cached in
+    versions.json, so nothing is pulled twice).
+    """
     entry.pop("error", None)
     try:
-        tag = latest_maven_tag(major)
-        if not tag:
+        tags = stable_maven_tags(major)[:MAVEN_HISTORY_TAGS]
+        if not tags:
             raise RuntimeError(
                 f"No stable {MAVEN_IMAGE}:x.y.z-amazoncorretto-{major} tag found")
-        entry["mavenTag"] = tag
-        for arch, digest in hub_digests(tag).items():
-            update_arch(entry, arch, digest, {}, tag, MAVEN_IMAGE)
+        hist = entry.setdefault("tags", {})
+        for tag in tags:
+            te = hist.get(tag, {})
+            te.pop("error", None)
+            try:
+                digests = hub_digests(tag)
+            except Exception as exc:  # keep old data, record the error
+                te["error"] = str(exc)
+                print(f"{MAVEN_IMAGE}:{tag}: ERROR: {exc}", file=sys.stderr)
+                te["lastChecked"] = today().isoformat()
+                if te.get("arches") or tag in hist:
+                    hist[tag] = te
+                continue
+            if any(needs_pull(te, a, d, known) for a, d in digests.items()):
+                if budget["left"] <= 0:
+                    print(f"{MAVEN_IMAGE}:{tag}: new digest, but pull budget "
+                          f"reached - skipped until a later run")
+                    if tag in hist:
+                        hist[tag] = te
+                    continue
+                budget["left"] -= 1
+            for arch, digest in digests.items():
+                update_arch(te, arch, digest, known, tag, MAVEN_IMAGE)
+            te.setdefault("firstSeen", today().isoformat())
+            te["lastChecked"] = today().isoformat()
+            hist[tag] = te
     except Exception as exc:
         entry["error"] = str(exc)
         print(f"{MAVEN_IMAGE} (Corretto {major}): ERROR: {exc}", file=sys.stderr)
@@ -358,8 +418,8 @@ function copyFromRef(el, ref) {
     window.prompt("Copy manually (Ctrl+C):", ref);
   });
 }
-function filterSnapshots(major) {
-  var div = document.getElementById("snapshot-filter");
+function filterTable(divId, major) {
+  var div = document.getElementById(divId);
   if (!div) { return; }
   var table = div.nextElementSibling;
   while (table && table.tagName !== "TABLE") { table = table.nextElementSibling; }
@@ -368,7 +428,8 @@ function filterSnapshots(major) {
   for (var i = 0; i < rows.length; i++) {
     var cells = rows[i].getElementsByTagName("td");
     if (!cells.length) { continue; }  // header row
-    var m = cells[0].textContent.match(/:(\\d+)/);
+    // snapshot rows: ":25.2026..." in cell 0; maven rows: "25" in cell 0
+    var m = cells[0].textContent.match(/:(\\d+)/) || cells[0].textContent.match(/^(\\d+)/);
     rows[i].style.display = (!major || (m && m[1] === major)) ? "" : "none";
   }
   var buttons = div.getElementsByTagName("button");
@@ -415,20 +476,46 @@ def version_cells(entry: dict) -> tuple:
     return (a.get("javaVersion", "–"), corretto, a.get("correttoBuild", "–"))
 
 
+def corretto_of(entry: dict) -> str | None:
+    """Corretto version of an entry (amd64, arm64 fallback); None if unknown."""
+    a = entry.get("arches", {}).get("amd64", {})
+    if "correttoVersion" not in a:
+        a = entry.get("arches", {}).get("arm64", {})
+    return a.get("correttoVersion")
+
+
+def maven_version_key(tag: str) -> tuple:
+    """Sort key (x, y, z) of a maven:x.y.z-amazoncorretto-<major> tag."""
+    m = MVN_VER_RE.match(tag)
+    return tuple(int(g) for g in m.groups()) if m else (0, 0, 0)
+
+
+def matching_maven(maven_entry: dict, corretto: str | None) -> tuple:
+    """(tag, tag entry) of the newest tracked Maven tag whose Corretto version
+    exactly matches `corretto` - (None, {}) if no tracked tag matches."""
+    if not corretto:
+        return None, {}
+    for tag in sorted(maven_entry.get("tags", {}), key=maven_version_key, reverse=True):
+        te = maven_entry["tags"][tag]
+        if corretto_of(te) == corretto:
+            return tag, te
+    return None, {}
+
+
 def render_row(tag: str, e: dict, maven: dict, s: dict) -> str:
     tp = s["copy_title"]
     digests = digest_lines(e, IMAGE, tag, tp)
     java_version, corretto, build = version_cells(e)
 
-    # Maven counterpart (same Java major version)
-    m = maven.get(major_of(e) or "", {})
-    m_arches = m.get("arches", {})
-    if m.get("mavenTag") and "correttoVersion" in m_arches.get("amd64", {}):
-        maven_tag_cell = f"`{MAVEN_IMAGE}:{m['mavenTag']}`"
-        maven_digest_cell = digest_lines(m, MAVEN_IMAGE, m["mavenTag"], tp)
-        m_amd = m_arches["amd64"]
-        match = " ✓" if m_amd["correttoVersion"] == corretto.split("<br>")[0] else " ⚠️"
-        maven_version_cell = m_amd["correttoVersion"] + match
+    # Maven counterpart: only a tag whose Corretto version exactly matches
+    # this row's image - otherwise show no Maven image at all (the full list
+    # of tracked Maven tags is in the Maven section below)
+    m_tag, m_entry = matching_maven(maven.get(major_of(e) or "", {}),
+                                    corretto.split("<br>")[0])
+    if m_tag:
+        maven_tag_cell = f"`{MAVEN_IMAGE}:{m_tag}`"
+        maven_digest_cell = digest_lines(m_entry, MAVEN_IMAGE, m_tag, tp)
+        maven_version_cell = corretto_of(m_entry) + " ✓"
     else:
         maven_tag_cell = maven_digest_cell = maven_version_cell = "–"
 
@@ -469,30 +556,81 @@ STRINGS = {
                       "tag without suffix – the table shows both architectures either way.\n\n"
                       "**Why this table is useful:** the base tags above are mutable and move to newer "
                       "Corretto builds over time. If the latest base image has no matching Maven build "
-                      "image yet (⚠️ above) – breaking setups that need an exact JVM build match, such as "
-                      "Project Leyden AOT caches – pin the runtime to a dated snapshot whose Corretto build "
-                      "still matches your build image until the Maven image catches up. The snapshot tags "
-                      "are immutable; AWS does not document an expiry for them, and in practice they remain "
-                      "available for years."),
+                      "image yet (no Maven tag in its row above) – breaking setups that need an exact JVM "
+                      "build match, such as Project Leyden AOT caches – pin the runtime to a dated "
+                      "snapshot whose Corretto build still matches your build image until the Maven image "
+                      "catches up. The snapshot tags are immutable; AWS does not document an expiry for "
+                      "them, and in practice they remain available for years."),
     "snapshot_empty": ("No new dated snapshot tags within the discovery window "
                        f"({SNAPSHOT_TAG_MAX_AGE_DAYS} day(s); retention: {SNAPSHOT_HISTORY_DAYS} days)."),
     "snapshot_filter_label": "Filter by Java version:",
     "snapshot_filter_all": "All",
+    "maven_section": "Maven build image tags",
+    "maven_text": (f"The {MAVEN_HISTORY_TAGS} most recent stable `maven:x.y.z-amazoncorretto-<major>` "
+                   "tags per Java LTS version on Docker Hub and the Corretto version inside each. "
+                   "This is the pool the base/snapshot tables above draw their Maven columns from: "
+                   "only tags whose Corretto version **exactly matches** the image of the row are "
+                   "shown there. ✓ marks the tag matching the current base image of its Java "
+                   "version. (After a change, the history fills up over a few daily runs – pulls "
+                   "are rate-limited, see README; until then fewer rows are shown.)"),
+    "maven_table_header": ("| Java | Maven image tag | Maven image digests (x86_64 / arm64) | Corretto "
+                           "| Corretto build | Matches base image | First seen | Last checked |"),
+    "maven_empty": "No Maven tags tracked yet.",
     "table_header": ("| Base image tag | Base image digests (x86_64 / arm64) | OpenJDK | Corretto | Corretto build "
                      "| Maven image tag | Maven image digests (x86_64 / arm64) | Maven Corretto | First seen | Last checked |"),
     "explanation": [
         "**Base image tag**: the multi-arch tag of `public.ecr.aws/lambda/java`, linked to its page in the ECR Public Gallery (snapshot tags are dated: arch-specific `-x86_64`/`-arm64` tags and/or a multi-arch tag).",
         "**Base image digests**: digests of the `x86_64` (amd64) and `arm64` manifests behind the tag (shortened). Tags are mutable – a digest identifies the content uniquely. Click to copy the full pin.",
         "**OpenJDK / Corretto / Corretto build**: output of `java -version` inside the x86_64 image. The arm64 image is verified too; any deviation is flagged (⚠️ arm64: …).",
-        "**Maven image tag**: the latest stable `maven:x.y.z-amazoncorretto-<major>` tag on Docker Hub for the same Java major version – i.e. the matching build image.",
+        "**Maven image tag**: the newest tracked `maven:x.y.z-amazoncorretto-<major>` tag whose Corretto version **exactly matches** the image in this row – i.e. a build image that is safe to combine with this runtime (required e.g. for Project Leyden AOT caches). `–` = none of the tracked Maven tags matches; the full list is in the Maven table below.",
         "**Maven image digests**: digests of that Maven image's `x86_64` (amd64) and `arm64` manifests (shortened). Click to copy the full pin.",
-        "**Maven Corretto**: Corretto version of that Maven image (x86_64). ✓ = identical build to the Lambda image (safe e.g. for Project Leyden AOT caches), ⚠️ = different build.",
+        "**Maven Corretto**: Corretto version of that Maven image (x86_64) – by selection always identical to the image in this row (✓).",
         "**First seen**: the date this digest showed up here first.",
     ],
     "rawdata": "Raw data",
     "legend_heading": "Notes",
     "copy_title": "Click to copy: ",
 }
+
+
+def filter_div(div_id: str, majors: list, s: dict) -> str:
+    """Filter buttons ('All' + one per Java major version) for the table
+    directly following the returned div (filtered client-side by filterTable())."""
+    buttons = " ".join(
+        f'<button type="button" data-major="{m}" '
+        f'onclick="filterTable(\'{div_id}\', \'{m}\')">{m}</button>' for m in majors)
+    return (f'<div id="{div_id}">{s["snapshot_filter_label"]} '
+            f'<button type="button" data-major="" style="font-weight:bold" '
+            f'onclick="filterTable(\'{div_id}\', \'\')">{s["snapshot_filter_all"]}</button> '
+            f'{buttons}</div>')
+
+
+def render_maven_section(maven: dict, data: dict, s: dict) -> str:
+    """Table of the tracked Maven tags per Java LTS version."""
+    tp = s["copy_title"]
+    # Corretto version of the current base image per major (for the ✓ column)
+    base_corretto = {m: corretto_of(e) for e in data.get("tags", {}).values()
+                     if (m := major_of(e))}
+    rows = []
+    for major in sorted(maven, key=int, reverse=True):
+        pick, _ = matching_maven(maven[major], base_corretto.get(major))
+        for tag in sorted(maven[major].get("tags", {}),
+                          key=maven_version_key, reverse=True):
+            te = maven[major]["tags"][tag]
+            _, corretto, build = version_cells(te)
+            if "error" in te and corretto == "–":
+                corretto = f"⚠️ {te['error']}"
+            match = "✓" if tag == pick else "–"
+            rows.append(f"| {major} | `{MAVEN_IMAGE}:{tag}` "
+                        f"| {digest_lines(te, MAVEN_IMAGE, tag, tp)} "
+                        f"| {corretto} | {build} | {match} "
+                        f"| {te.get('firstSeen', '–')} | {te.get('lastChecked', '–')} |")
+    if not rows:
+        return f"## {s['maven_section']}\n\n{s['maven_empty']}"
+    majors = sorted((m for m in maven if maven[m].get("tags")), key=int, reverse=True)
+    header = s["maven_table_header"] + "\n" + "|---|---|---|---|---|---|---|---|"
+    return (f"## {s['maven_section']}\n\n{s['maven_text']}\n\n"
+            f"{filter_div('maven-filter', majors, s)}\n\n{header}\n" + "\n".join(rows))
 
 
 def render_site(data: dict) -> str:
@@ -519,21 +657,16 @@ def render_site(data: dict) -> str:
             render_row(t, e, maven, s)
             for t, e in sorted(snapshots.items(), key=sort_key, reverse=True))
         # Filter buttons: "All" plus one button per Java major version present
-        # in the snapshot table (filtered client-side by filterSnapshots())
+        # in the snapshot table (filtered client-side by filterTable())
         majors = sorted({m for m in (major_of(e) for e in snapshots.values())
                          if m}, key=int, reverse=True)
-        buttons = " ".join(
-            f'<button type="button" data-major="{m}" '
-            f'onclick="filterSnapshots(\'{m}\')">{m}</button>' for m in majors)
-        snapshot_filter = (
-            f'<div id="snapshot-filter">{s["snapshot_filter_label"]} '
-            f'<button type="button" data-major="" style="font-weight:bold" '
-            f'onclick="filterSnapshots(\'\')">{s["snapshot_filter_all"]}</button> '
-            f'{buttons}</div>')
         snapshot_section = (f"## {s['snapshot_section']}\n\n{s['snapshot_text']}\n\n"
-                            f"{snapshot_filter}\n\n{header}\n{snapshot_rows}")
+                            f"{filter_div('snapshot-filter', majors, s)}\n\n"
+                            f"{header}\n{snapshot_rows}")
     else:
         snapshot_section = f"## {s['snapshot_section']}\n\n{s['snapshot_empty']}"
+
+    maven_section = render_maven_section(maven, data, s)
 
     explanation = "\n".join(f"- {line}" for line in s["explanation"])
 
@@ -562,6 +695,8 @@ title: {s['title']}
 
 {snapshot_section}
 
+{maven_section}
+
 ## {s['legend_heading']}
 
 {explanation}
@@ -586,6 +721,12 @@ def main() -> int:
     # they are rediscovered in the new grouped format
     data["snapshots"] = {k: v for k, v in data["snapshots"].items()
                          if not k.endswith("-x86_64")}
+    # Maven: upgrade the old single-tag format (mavenTag + arches on the top
+    # level) to the history format (tags: {<tag>: {...}})
+    for e in data["maven"].values():
+        if "tags" not in e and "mavenTag" in e:
+            te = {k: e.pop(k) for k in ("arches", "firstSeen", "lastChecked") if k in e}
+            e["tags"] = {e.pop("mavenTag"): te}
 
     token = ecr_token()
 
@@ -594,11 +735,14 @@ def main() -> int:
         result = {}
         for section in ("tags", "snapshots", "maven"):
             for e in data[section].values():
-                for a in e.get("arches", {}).values():
-                    if a.get("digest") and "correttoVersion" in a:
-                        result[a["digest"]] = {k: a[k] for k in
-                                               ("javaVersion", "correttoVersion",
-                                                "correttoBuild", "rawOutput")}
+                # Maven entries keep their per-tag data one level deeper
+                entries = e.get("tags", {}).values() if section == "maven" else [e]
+                for entry in entries:
+                    for a in entry.get("arches", {}).values():
+                        if a.get("digest") and "correttoVersion" in a:
+                            result[a["digest"]] = {k: a[k] for k in
+                                                   ("javaVersion", "correttoVersion",
+                                                    "correttoBuild", "rawOutput")}
         return result
 
     # 1. Base image tags
@@ -632,13 +776,17 @@ def main() -> int:
             print(f"Snapshot removed (older than {SNAPSHOT_HISTORY_DAYS} days): {prefix}")
             del data["snapshots"][prefix]
 
-    # 5. Maven counterpart for all occurring Java major versions
+    # 5. Maven tag history for all occurring Java major versions, newest Java
+    #    version first (pull budget shared across majors: Docker Hub
+    #    rate-limits pulls; the newest LTS profits first)
     majors = sorted({m for m in (major_of(e) for e in
                                  list(data["tags"].values())
                                  + list(data["snapshots"].values()))
-                     if m})
+                     if m}, key=int, reverse=True)
+    budget = {"left": MAVEN_HISTORY_MAX_PULLS}
     for major in majors:
-        data["maven"][major] = process_maven(major, data["maven"].get(major, {}))
+        data["maven"][major] = process_maven(
+            major, data["maven"].get(major, {}), known(), budget)
 
     data["generatedAt"] = now()
     data["source"] = IMAGE
@@ -653,6 +801,8 @@ def main() -> int:
 
     errors = sum(1 for section in ("tags", "snapshots", "maven")
                  for e in data[section].values() if "error" in e)
+    errors += sum(1 for e in data["maven"].values()
+                  for te in e.get("tags", {}).values() if "error" in te)
     return 1 if errors else 0
 
 
